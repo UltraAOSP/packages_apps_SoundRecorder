@@ -171,7 +171,7 @@ public class SoundRecorder extends AppCompatActivity
             super.onBackPressed();
         }
     }
-
+/*
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
         // Inflate the menu; this adds items to the action bar if it is present.
@@ -188,7 +188,7 @@ public class SoundRecorder extends AppCompatActivity
 
         return super.onOptionsItemSelected(item);
     }
-
+*/
     @Override
     protected void onSaveInstanceState(Bundle outState) {
         super.onSaveInstanceState(outState);
