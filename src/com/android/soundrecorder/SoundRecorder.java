@@ -55,6 +55,9 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 
+import com.android.soundrecorder.utils.Recorder;
+import com.android.soundrecorder.utils.VUMeter;
+
 /**
  * Calculates remaining recording time based on available disk space and
  * optionally a maximum recording file size.

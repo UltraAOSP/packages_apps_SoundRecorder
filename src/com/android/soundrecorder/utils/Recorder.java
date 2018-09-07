@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-package com.android.soundrecorder;
+package com.android.soundrecorder.utils;
 
 import java.io.File;
 import java.io.IOException;
