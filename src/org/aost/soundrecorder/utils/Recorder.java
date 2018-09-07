@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-package com.android.soundrecorder.utils;
+package org.aost.soundrecorder.utils;
 
 import java.io.File;
 import java.io.IOException;
@@ -29,6 +29,8 @@ import android.media.MediaPlayer.OnErrorListener;
 import android.os.Bundle;
 import android.os.Environment;
 import android.util.Log;
+
+import org.aost.soundrecorder.SoundRecorder;
 
 public class Recorder implements OnCompletionListener, OnErrorListener {
     static final String SAMPLE_PREFIX = "recording";

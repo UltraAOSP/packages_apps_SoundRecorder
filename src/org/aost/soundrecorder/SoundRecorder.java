@@ -1,37 +1,14 @@
-/*
- * Copyright (C) 2011 The Android Open Source Project
- * Copyright (C) 2016 Freescale Semiconductor, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+package org.aost.soundrecorder;
 
-package com.android.soundrecorder;
-
-import java.io.File;
-import java.text.SimpleDateFormat;
-import java.util.Date;
-
-import android.content.pm.PackageManager;
-import android.widget.Toast;
 import android.Manifest;
-import android.app.Activity;
-import android.app.AlertDialog;
+import android.content.BroadcastReceiver;
 import android.content.ContentResolver;
 import android.content.ContentValues;
-import android.content.Intent;
 import android.content.Context;
+import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.BroadcastReceiver;
+import android.content.pm.PackageManager;
+import android.content.res.ColorStateList;
 import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.database.Cursor;
@@ -42,11 +19,16 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.PowerManager;
-import android.os.StatFs;
-import android.os.PowerManager.WakeLock;
 import android.provider.MediaStore;
+import android.support.v4.view.GravityCompat;
+import android.support.v4.widget.DrawerLayout;
+import android.support.v7.app.AlertDialog;
+import android.support.v7.app.AppCompatActivity;
+import android.support.v7.widget.Toolbar;
 import android.util.Log;
 import android.view.KeyEvent;
+import android.view.Menu;
+import android.view.MenuItem;
 import android.view.View;
 import android.widget.Button;
 import android.widget.ImageButton;
@@ -55,151 +37,15 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 
-import com.android.soundrecorder.utils.Recorder;
-import com.android.soundrecorder.utils.VUMeter;
+import org.aost.soundrecorder.utils.Recorder;
+import org.aost.soundrecorder.utils.RemainingTimeCalculator;
+import org.aost.soundrecorder.utils.VUMeter;
 
-/**
- * Calculates remaining recording time based on available disk space and
- * optionally a maximum recording file size.
- * 
- * The reason why this is not trivial is that the file grows in blocks
- * every few seconds or so, while we want a smooth countdown.
- */
+import java.io.File;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 
-class RemainingTimeCalculator {
-    public static final int UNKNOWN_LIMIT = 0;
-    public static final int FILE_SIZE_LIMIT = 1;
-    public static final int DISK_SPACE_LIMIT = 2;
-    
-    // which of the two limits we will hit (or have fit) first
-    private int mCurrentLowerLimit = UNKNOWN_LIMIT;
-    
-    private File mSDCardDirectory;
-    
-     // State for tracking file size of recording.
-    private File mRecordingFile;
-    private long mMaxBytes;
-    
-    // Rate at which the file grows
-    private int mBytesPerSecond;
-    
-    // time at which number of free blocks last changed
-    private long mBlocksChangedTime;
-    // number of available blocks at that time
-    private long mLastBlocks;
-    
-    // time at which the size of the file has last changed
-    private long mFileSizeChangedTime;
-    // size of the file at that time
-    private long mLastFileSize;
-    
-    public RemainingTimeCalculator() {
-        mSDCardDirectory = Environment.getExternalStorageDirectory();
-    }    
-    
-    /**
-     * If called, the calculator will return the minimum of two estimates:
-     * how long until we run out of disk space and how long until the file
-     * reaches the specified size.
-     * 
-     * @param file the file to watch
-     * @param maxBytes the limit
-     */
-    
-    public void setFileSizeLimit(File file, long maxBytes) {
-        mRecordingFile = file;
-        mMaxBytes = maxBytes;
-    }
-    
-    /**
-     * Resets the interpolation.
-     */
-    public void reset() {
-        mCurrentLowerLimit = UNKNOWN_LIMIT;
-        mBlocksChangedTime = -1;
-        mFileSizeChangedTime = -1;
-    }
-    
-    /**
-     * Returns how long (in seconds) we can continue recording. 
-     */
-    public long timeRemaining() {
-        // Calculate how long we can record based on free disk space
-        
-        StatFs fs = new StatFs(mSDCardDirectory.getAbsolutePath());
-        long blocks = fs.getAvailableBlocks();
-        long blockSize = fs.getBlockSize();
-        long now = System.currentTimeMillis();
-        
-        if (mBlocksChangedTime == -1 || blocks != mLastBlocks) {
-            mBlocksChangedTime = now;
-            mLastBlocks = blocks;
-        }
-
-        /* The calculation below always leaves one free block, since free space
-           in the block we're currently writing to is not added. This
-           last block might get nibbled when we close and flush the file, but 
-           we won't run out of disk. */
-        
-        // at mBlocksChangedTime we had this much time
-        long result = mLastBlocks*blockSize/mBytesPerSecond;
-        // so now we have this much time
-        result -= (now - mBlocksChangedTime)/1000;
-        
-        if (mRecordingFile == null) {
-            mCurrentLowerLimit = DISK_SPACE_LIMIT;
-            return result;
-        }
-        
-        // If we have a recording file set, we calculate a second estimate
-        // based on how long it will take us to reach mMaxBytes.
-        
-        mRecordingFile = new File(mRecordingFile.getAbsolutePath());
-        long fileSize = mRecordingFile.length();
-        if (mFileSizeChangedTime == -1 || fileSize != mLastFileSize) {
-            mFileSizeChangedTime = now;
-            mLastFileSize = fileSize;
-        }
-
-        long result2 = (mMaxBytes - fileSize)/mBytesPerSecond;
-        result2 -= (now - mFileSizeChangedTime)/1000;
-        result2 -= 1; // just for safety
-        
-        mCurrentLowerLimit = result < result2
-            ? DISK_SPACE_LIMIT : FILE_SIZE_LIMIT;
-        
-        return Math.min(result, result2);
-    }
-    
-    /**
-     * Indicates which limit we will hit (or have hit) first, by returning one 
-     * of FILE_SIZE_LIMIT or DISK_SPACE_LIMIT or UNKNOWN_LIMIT. We need this to 
-     * display the correct message to the user when we hit one of the limits.
-     */
-    public int currentLowerLimit() {
-        return mCurrentLowerLimit;
-    }
-
-    /**
-     * Is there any point of trying to start recording?
-     */
-    public boolean diskSpaceAvailable() {
-        StatFs fs = new StatFs(mSDCardDirectory.getAbsolutePath());
-        // keep one free block
-        return fs.getAvailableBlocks() > 1;
-    }
-
-    /**
-     * Sets the bit rate used in the interpolation.
-     *
-     * @param bitRate the bit rate to set in bits/sec.
-     */
-    public void setBitRate(int bitRate) {
-        mBytesPerSecond = bitRate/8;
-    }
-}
-
-public class SoundRecorder extends Activity 
+public class SoundRecorder extends AppCompatActivity
         implements Button.OnClickListener, Recorder.OnStateChangedListener {
     static final String TAG = "SoundRecorder";
     static final String STATE_FILE_NAME = "soundrecorder.state";
@@ -211,8 +57,8 @@ public class SoundRecorder extends Activity
     static final String AUDIO_AMR = "audio/amr";
     static final String AUDIO_ANY = "audio/*";
     static final String ANY_ANY = "*/*";
-    
-    static final int BITRATE_AMR =  12200; // bits/sec
+
+    public static final int BITRATE_AMR =  12200; // bits/sec
     static final int BITRATE_3GPP = 12200;
 
     private int mNumPermissionsToRequest = 0;
@@ -222,17 +68,17 @@ public class SoundRecorder extends Activity
     private int mIndexPermissionRequestStorage = 0;
     private static final int PERMISSION_REQUEST_CODE = 0;
 
-    WakeLock mWakeLock;
+    PowerManager.WakeLock mWakeLock;
     String mRequestedType = AUDIO_ANY;
     Recorder mRecorder;
-    boolean mSampleInterrupted = false;    
-    String mErrorUiMessage = null; // Some error messages are displayed in the UI, 
-                                   // not a dialog. This happens when a recording
-                                   // is interrupted for some reason.
-    
+    boolean mSampleInterrupted = false;
+    String mErrorUiMessage = null; // Some error messages are displayed in the UI,
+    // not a dialog. This happens when a recording
+    // is interrupted for some reason.
+
     long mMaxFileSize = -1;        // can be specified in the intent
     RemainingTimeCalculator mRemainingTimeCalculator;
-    
+
     String mTimerFormat;
     final Handler mHandler = new Handler();
     Runnable mUpdateTimer = new Runnable() {
@@ -242,13 +88,13 @@ public class SoundRecorder extends Activity
     ImageButton mRecordButton;
     ImageButton mPlayButton;
     ImageButton mStopButton;
-    
+
     ImageView mStateLED;
     TextView mStateMessage1;
     TextView mStateMessage2;
     ProgressBar mStateProgressBar;
     TextView mTimerView;
-    
+
     LinearLayout mExitButtons;
     Button mAcceptButton;
     Button mDiscardButton;
@@ -256,10 +102,9 @@ public class SoundRecorder extends Activity
     private BroadcastReceiver mSDCardMountEventReceiver = null;
 
     @Override
-    public void onCreate(Bundle icycle) {
-        super.onCreate(icycle);
-
-	checkPermission();
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        checkPermission();
         Intent i = getIntent();
         if (i != null) {
             String s = i.getType();
@@ -267,73 +112,99 @@ public class SoundRecorder extends Activity
                     || ANY_ANY.equals(s)) {
                 mRequestedType = s;
             } else if (s != null) {
-                // we only support amr and 3gpp formats right now 
+                // we only support amr and 3gpp formats right now
                 setResult(RESULT_CANCELED);
                 finish();
                 return;
             }
-            
+
             final String EXTRA_MAX_BYTES
-                = android.provider.MediaStore.Audio.Media.EXTRA_MAX_BYTES;
+                    = android.provider.MediaStore.Audio.Media.EXTRA_MAX_BYTES;
             mMaxFileSize = i.getLongExtra(EXTRA_MAX_BYTES, -1);
         }
-        
+
         if (AUDIO_ANY.equals(mRequestedType) || ANY_ANY.equals(mRequestedType)) {
             mRequestedType = AUDIO_3GPP;
         }
-        
-        setContentView(R.layout.main);
-
+        setContentView(R.layout.activity_main);
+        Toolbar toolbar = (Toolbar) findViewById(R.id.toolbar);
+        setSupportActionBar(toolbar);
         mRecorder = new Recorder();
         mRecorder.setOnStateChangedListener(this);
         mRemainingTimeCalculator = new RemainingTimeCalculator();
 
-        PowerManager pm 
-            = (PowerManager) getSystemService(Context.POWER_SERVICE);
-        mWakeLock = pm.newWakeLock(PowerManager.SCREEN_DIM_WAKE_LOCK, 
-                                    "SoundRecorder");
+        PowerManager pm
+                = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        mWakeLock = pm.newWakeLock(PowerManager.SCREEN_DIM_WAKE_LOCK,
+                getResources().getString(R.string.app_name));
 
         initResourceRefs();
-        
+
         setResult(RESULT_CANCELED);
         registerExternalStorageListener();
-        if (icycle != null) {
-            Bundle recorderState = icycle.getBundle(RECORDER_STATE_KEY);
+        if (savedInstanceState != null) {
+            Bundle recorderState = savedInstanceState.getBundle(RECORDER_STATE_KEY);
             if (recorderState != null) {
                 mRecorder.restoreState(recorderState);
                 mSampleInterrupted = recorderState.getBoolean(SAMPLE_INTERRUPTED_KEY, false);
                 mMaxFileSize = recorderState.getLong(MAX_FILE_SIZE_KEY, -1);
             }
         }
-        
+
         updateUi();
     }
-    
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
 
-        setContentView(R.layout.main);
+        setContentView(R.layout.activity_main);
         initResourceRefs();
         updateUi();
     }
-    
+
+    @Override
+    public void onBackPressed() {
+        DrawerLayout drawer = (DrawerLayout) findViewById(R.id.drawer_layout);
+        if (drawer.isDrawerOpen(GravityCompat.START)) {
+            drawer.closeDrawer(GravityCompat.START);
+        } else {
+            super.onBackPressed();
+        }
+    }
+
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        // Inflate the menu; this adds items to the action bar if it is present.
+        getMenuInflater().inflate(R.menu.main, menu);
+        return true;
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        int id = item.getItemId();
+        if (id == R.id.action_settings) {
+            return true;
+        }
+
+        return super.onOptionsItemSelected(item);
+    }
+
     @Override
     protected void onSaveInstanceState(Bundle outState) {
         super.onSaveInstanceState(outState);
-        
+
         if (mRecorder.sampleLength() == 0)
             return;
 
         Bundle recorderState = new Bundle();
-        
+
         mRecorder.saveState(recorderState);
         recorderState.putBoolean(SAMPLE_INTERRUPTED_KEY, mSampleInterrupted);
         recorderState.putLong(MAX_FILE_SIZE_KEY, mMaxFileSize);
-        
+
         outState.putBundle(RECORDER_STATE_KEY, recorderState);
     }
-    
+
     /*
      * Whenever the UI is re-created (due f.ex. to orientation change) we have
      * to reinitialize references to the views.
@@ -342,18 +213,18 @@ public class SoundRecorder extends Activity
         mRecordButton = (ImageButton) findViewById(R.id.recordButton);
         mPlayButton = (ImageButton) findViewById(R.id.playButton);
         mStopButton = (ImageButton) findViewById(R.id.stopButton);
-        
+
         mStateLED = (ImageView) findViewById(R.id.stateLED);
         mStateMessage1 = (TextView) findViewById(R.id.stateMessage1);
         mStateMessage2 = (TextView) findViewById(R.id.stateMessage2);
         mStateProgressBar = (ProgressBar) findViewById(R.id.stateProgressBar);
         mTimerView = (TextView) findViewById(R.id.timerView);
-        
+
         mExitButtons = (LinearLayout) findViewById(R.id.exitButtons);
         mAcceptButton = (Button) findViewById(R.id.acceptButton);
         mDiscardButton = (Button) findViewById(R.id.discardButton);
         mVUMeter = (VUMeter) findViewById(R.id.uvMeter);
-        
+
         mRecordButton.setOnClickListener(this);
         mPlayButton.setOnClickListener(this);
         mStopButton.setOnClickListener(this);
@@ -361,10 +232,10 @@ public class SoundRecorder extends Activity
         mDiscardButton.setOnClickListener(this);
 
         mTimerFormat = getResources().getString(R.string.timer_format);
-        
+
         mVUMeter.setRecorder(mRecorder);
     }
-    
+
     /*
      * Make sure we're not recording music playing in the background, ask
      * the MediaPlaybackService to pause playback.
@@ -405,7 +276,7 @@ public class SoundRecorder extends Activity
                     } else {
                         throw new IllegalArgumentException("Invalid output file type requested");
                     }
-                    
+
                     if (mMaxFileSize != -1) {
                         mRemainingTimeCalculator.setFileSizeLimit(
                                 mRecorder.sampleFile(), mMaxFileSize);
@@ -429,9 +300,9 @@ public class SoundRecorder extends Activity
                 break;
         }
     }
-    
+
     /*
-     * Handle the "back" hardware key. 
+     * Handle the "back" hardware key.
      */
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
@@ -466,7 +337,7 @@ public class SoundRecorder extends Activity
     protected void onPause() {
         mSampleInterrupted = mRecorder.state() == Recorder.RECORDING_STATE;
         mRecorder.stop();
-        
+
         super.onPause();
     }
 
@@ -487,9 +358,9 @@ public class SoundRecorder extends Activity
             return;
         }
         setResult(RESULT_OK, new Intent().setData(uri)
-                                         .setFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));
+                .setFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));
     }
-    
+
     /*
      * Called on destroy to unregister the SD card mount event receiver.
      */
@@ -501,7 +372,7 @@ public class SoundRecorder extends Activity
         }
         super.onDestroy();
     }
-    
+
     /*
      * Registers an intent to listen for ACTION_MEDIA_EJECT/ACTION_MEDIA_MOUNTED
      * notifications.
@@ -538,11 +409,11 @@ public class SoundRecorder extends Activity
                 return null;
             }
             return resolver.query(uri, projection, selection, selectionArgs, sortOrder);
-         } catch (UnsupportedOperationException ex) {
+        } catch (UnsupportedOperationException ex) {
             return null;
         }
     }
-    
+
     /*
      * Add the given audioId to the playlist with the given playlistId; and maintain the
      * play_order in the playlist.
@@ -561,7 +432,7 @@ public class SoundRecorder extends Activity
         values.put(MediaStore.Audio.Playlists.Members.AUDIO_ID, audioId);
         resolver.insert(uri, values);
     }
-    
+
     /*
      * Obtain the id for the default play list from the audio_playlists table.
      */
@@ -584,7 +455,7 @@ public class SoundRecorder extends Activity
         cursor.close();
         return id;
     }
-    
+
     /*
      * Create a playlist with the given default playlist name, if no such playlist exists.
      */
@@ -594,11 +465,11 @@ public class SoundRecorder extends Activity
         Uri uri = resolver.insert(MediaStore.Audio.Playlists.getContentUri("external"), cv);
         if (uri == null) {
             new AlertDialog.Builder(this)
-                .setTitle(R.string.app_name)
-                .setMessage(R.string.error_mediadb_new_record)
-                .setPositiveButton(R.string.button_ok, null)
-                .setCancelable(false)
-                .show();
+                    .setTitle(R.string.app_name)
+                    .setMessage(R.string.error_mediadb_new_record)
+                    .setPositiveButton(R.string.button_ok, null)
+                    .setCancelable(false)
+                    .show();
         }
         return uri;
     }
@@ -638,11 +509,11 @@ public class SoundRecorder extends Activity
         Uri result = resolver.insert(base, cv);
         if (result == null) {
             new AlertDialog.Builder(this)
-                .setTitle(R.string.app_name)
-                .setMessage(R.string.error_mediadb_new_record)
-                .setPositiveButton(R.string.button_ok, null)
-                .setCancelable(false)
-                .show();
+                    .setTitle(R.string.app_name)
+                    .setMessage(R.string.error_mediadb_new_record)
+                    .setPositiveButton(R.string.button_ok, null)
+                    .setCancelable(false)
+                    .show();
             return null;
         }
         if (getPlaylistId(res) == -1) {
@@ -651,8 +522,8 @@ public class SoundRecorder extends Activity
         int audioId = Integer.valueOf(result.getLastPathSegment());
         addToPlaylist(resolver, audioId, getPlaylistId(res));
 
-        // Notify those applications such as Music listening to the 
-        // scanner events that a recorded audio file just created. 
+        // Notify those applications such as Music listening to the
+        // scanner events that a recorded audio file just created.
         sendBroadcast(new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, result));
         return result;
     }
@@ -664,70 +535,70 @@ public class SoundRecorder extends Activity
     private void updateTimerView() {
         Resources res = getResources();
         int state = mRecorder.state();
-        
+
         boolean ongoing = state == Recorder.RECORDING_STATE || state == Recorder.PLAYING_STATE;
-        
+
         long time = ongoing ? mRecorder.progress() : mRecorder.sampleLength();
         String timeStr = String.format(mTimerFormat, time/60, time%60);
         mTimerView.setText(timeStr);
-        
+
         if (state == Recorder.PLAYING_STATE) {
             mStateProgressBar.setProgress((int)(100*time/mRecorder.sampleLength()));
         } else if (state == Recorder.RECORDING_STATE) {
             updateTimeRemaining();
         }
-                
+
         if (ongoing)
             mHandler.postDelayed(mUpdateTimer, 1000);
     }
 
     /*
-     * Called when we're in recording state. Find out how much longer we can 
-     * go on recording. If it's under 5 minutes, we display a count-down in 
-     * the UI. If we've run out of time, stop the recording. 
+     * Called when we're in recording state. Find out how much longer we can
+     * go on recording. If it's under 5 minutes, we display a count-down in
+     * the UI. If we've run out of time, stop the recording.
      */
     private void updateTimeRemaining() {
         long t = mRemainingTimeCalculator.timeRemaining();
-            
+
         if (t <= 0) {
             mSampleInterrupted = true;
 
             int limit = mRemainingTimeCalculator.currentLowerLimit();
             switch (limit) {
                 case RemainingTimeCalculator.DISK_SPACE_LIMIT:
-                    mErrorUiMessage 
-                        = getResources().getString(R.string.storage_is_full);
+                    mErrorUiMessage
+                            = getResources().getString(R.string.storage_is_full);
                     break;
                 case RemainingTimeCalculator.FILE_SIZE_LIMIT:
-                    mErrorUiMessage 
-                        = getResources().getString(R.string.max_length_reached);
+                    mErrorUiMessage
+                            = getResources().getString(R.string.max_length_reached);
                     break;
                 default:
                     mErrorUiMessage = null;
                     break;
             }
-            
+
             mRecorder.stop();
             return;
         }
-            
+
         Resources res = getResources();
         String timeStr = "";
-        
+
         if (t < 60)
             timeStr = String.format(res.getString(R.string.sec_available), t);
         else if (t < 540)
             timeStr = String.format(res.getString(R.string.min_available), t/60 + 1);
-        
+
         mStateMessage1.setText(timeStr);
     }
-    
+
     /**
      * Shows/hides the appropriate child views for the new state.
      */
     private void updateUi() {
         Resources res = getResources();
-        
+
         switch (mRecorder.state()) {
             case Recorder.IDLE_STATE:
                 if (mRecorder.sampleLength() == 0) {
@@ -738,17 +609,17 @@ public class SoundRecorder extends Activity
                     mStopButton.setEnabled(false);
                     mStopButton.setFocusable(false);
                     mRecordButton.requestFocus();
-                    
+
                     mStateMessage1.setVisibility(View.INVISIBLE);
                     mStateLED.setVisibility(View.INVISIBLE);
                     mStateMessage2.setVisibility(View.INVISIBLE);
-                    
+
                     mExitButtons.setVisibility(View.INVISIBLE);
                     mVUMeter.setVisibility(View.VISIBLE);
 
                     mStateProgressBar.setVisibility(View.INVISIBLE);
-                    
-                    setTitle(res.getString(R.string.record_your_message));                    
+
+                    setTitle(res.getString(R.string.record_your_message));
                 } else {
                     mRecordButton.setEnabled(true);
                     mRecordButton.setFocusable(true);
@@ -756,9 +627,9 @@ public class SoundRecorder extends Activity
                     mPlayButton.setFocusable(true);
                     mStopButton.setEnabled(false);
                     mStopButton.setFocusable(false);
-                                            
+
                     mStateMessage1.setVisibility(View.INVISIBLE);
-                    mStateLED.setVisibility(View.INVISIBLE);                        
+                    mStateLED.setVisibility(View.INVISIBLE);
                     mStateMessage2.setVisibility(View.INVISIBLE);
 
                     mExitButtons.setVisibility(View.VISIBLE);
@@ -768,54 +639,55 @@ public class SoundRecorder extends Activity
 
                     setTitle(res.getString(R.string.message_recorded));
                 }
-                
+
                 if (mSampleInterrupted) {
                     mStateMessage2.setVisibility(View.VISIBLE);
                     mStateMessage2.setText(res.getString(R.string.recording_stopped));
                     mStateLED.setVisibility(View.INVISIBLE);
                 }
-                
+
                 if (mErrorUiMessage != null) {
                     mStateMessage1.setText(mErrorUiMessage);
                     mStateMessage1.setVisibility(View.VISIBLE);
                 }
-                
+
                 break;
-            case Recorder.RECORDING_STATE: 
+            case Recorder.RECORDING_STATE:
                 mRecordButton.setEnabled(false);
                 mRecordButton.setFocusable(false);
                 mPlayButton.setEnabled(false);
                 mPlayButton.setFocusable(false);
                 mStopButton.setEnabled(true);
                 mStopButton.setFocusable(true);
-                
+
                 mStateMessage1.setVisibility(View.VISIBLE);
                 mStateLED.setVisibility(View.VISIBLE);
-                mStateLED.setImageResource(R.drawable.recording_led);
+                mStateLED.setImageResource(R.drawable.ic_record);
+                mStateLED.setImageTintList(ColorStateList.valueOf(getColor(R.color.rec_btn_color)));
                 mStateMessage2.setVisibility(View.VISIBLE);
                 mStateMessage2.setText(res.getString(R.string.recording));
-                
+
                 mExitButtons.setVisibility(View.INVISIBLE);
                 mVUMeter.setVisibility(View.VISIBLE);
 
                 mStateProgressBar.setVisibility(View.INVISIBLE);
-                
+
                 setTitle(res.getString(R.string.record_your_message));
 
                 break;
 
-            case Recorder.PLAYING_STATE: 
+            case Recorder.PLAYING_STATE:
                 mRecordButton.setEnabled(true);
                 mRecordButton.setFocusable(true);
                 mPlayButton.setEnabled(false);
                 mPlayButton.setFocusable(false);
                 mStopButton.setEnabled(true);
                 mStopButton.setFocusable(true);
-                
+
                 mStateMessage1.setVisibility(View.INVISIBLE);
                 mStateLED.setVisibility(View.INVISIBLE);
                 mStateMessage2.setVisibility(View.INVISIBLE);
-                
+
                 mExitButtons.setVisibility(View.VISIBLE);
                 mVUMeter.setVisibility(View.INVISIBLE);
 
@@ -825,11 +697,11 @@ public class SoundRecorder extends Activity
 
                 break;
         }
-        
-        updateTimerView();   
+
+        updateTimerView();
         mVUMeter.invalidate();
     }
-    
+
     /*
      * Called when Recorder changed it's state.
      */
@@ -842,16 +714,16 @@ public class SoundRecorder extends Activity
             if (mWakeLock.isHeld())
                 mWakeLock.release();
         }
-        
+
         updateUi();
     }
-    
+
     /*
      * Called when MediaPlayer encounters an error.
      */
     public void onError(int error) {
         Resources res = getResources();
-        
+
         String message = null;
         switch (error) {
             case Recorder.SDCARD_ACCESS_ERROR:
@@ -866,58 +738,58 @@ public class SoundRecorder extends Activity
         }
         if (message != null) {
             new AlertDialog.Builder(this)
-                .setTitle(R.string.app_name)
-                .setMessage(message)
-                .setPositiveButton(R.string.button_ok, null)
-                .setCancelable(false)
-                .show();
+                    .setTitle(R.string.app_name)
+                    .setMessage(message)
+                    .setPositiveButton(R.string.button_ok, null)
+                    .setCancelable(false)
+                    .show();
         }
     }
 
     private void checkPermission(){
-	if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)
-			!= PackageManager.PERMISSION_GRANTED){
-		mNumPermissionsToRequest++;
-		mShouldRequestSoundPermission = true;
-	}
+        if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED){
+            mNumPermissionsToRequest++;
+            mShouldRequestSoundPermission = true;
+        }
 
-	if(checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-			!= PackageManager.PERMISSION_GRANTED){
-		mNumPermissionsToRequest++;
-		mShouldRequestStoragePermission  = true;
-	}
+        if(checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                != PackageManager.PERMISSION_GRANTED){
+            mNumPermissionsToRequest++;
+            mShouldRequestStoragePermission  = true;
+        }
 
-	String[] permissionToRequest = new String[mNumPermissionsToRequest];
-		int permissionRequestIndex = 0;
-	if(mShouldRequestSoundPermission){
-		permissionToRequest[permissionRequestIndex] = Manifest.permission.RECORD_AUDIO;
-		mIndexPermissionRequestSound = permissionRequestIndex;
-		permissionRequestIndex++;
-	}
-	if(mShouldRequestStoragePermission){
-		permissionToRequest[permissionRequestIndex] = Manifest.permission.WRITE_EXTERNAL_STORAGE;
-		mIndexPermissionRequestStorage= permissionRequestIndex;
-		permissionRequestIndex++;
-	}
-	if(permissionToRequest.length > 0){
-		requestPermissions(permissionToRequest, PERMISSION_REQUEST_CODE);
-	}
+        String[] permissionToRequest = new String[mNumPermissionsToRequest];
+        int permissionRequestIndex = 0;
+        if(mShouldRequestSoundPermission){
+            permissionToRequest[permissionRequestIndex] = Manifest.permission.RECORD_AUDIO;
+            mIndexPermissionRequestSound = permissionRequestIndex;
+            permissionRequestIndex++;
+        }
+        if(mShouldRequestStoragePermission){
+            permissionToRequest[permissionRequestIndex] = Manifest.permission.WRITE_EXTERNAL_STORAGE;
+            mIndexPermissionRequestStorage= permissionRequestIndex;
+            permissionRequestIndex++;
+        }
+        if(permissionToRequest.length > 0){
+            requestPermissions(permissionToRequest, PERMISSION_REQUEST_CODE);
+        }
     }
 
     @Override
     public void onRequestPermissionsResult(int requestCode,
-		String permissions[], int[] grantResults) {
-	switch (requestCode) {
-	case PERMISSION_REQUEST_CODE:
-		if (grantResults.length > 0
-				&& grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-			Log.v(TAG, "Grant permission successfully");
-		} else {
-			Log.v(TAG, "Grant permission unsuccessfully");
-		}
-		break;
-	default:
-		break;
-	}
+                                           String permissions[], int[] grantResults) {
+        switch (requestCode) {
+            case PERMISSION_REQUEST_CODE:
+                if (grantResults.length > 0
+                        && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    Log.v(TAG, "Grant permission successfully");
+                } else {
+                    Log.v(TAG, "Grant permission unsuccessfully");
+                }
+                break;
+            default:
+                break;
+        }
     }
 }

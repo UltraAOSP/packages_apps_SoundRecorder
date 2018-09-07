@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.android.soundrecorder.utils;
+package org.aost.soundrecorder.utils;
 
 import java.util.Map;
 
@@ -25,6 +25,8 @@ import android.graphics.Paint;
 import android.graphics.drawable.Drawable;
 import android.util.AttributeSet;
 import android.view.View;
+
+import org.aost.soundrecorder.R;
 
 public class VUMeter extends View {
     static final float PIVOT_RADIUS = 3.5f;
